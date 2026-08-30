@@ -1,0 +1,35 @@
+.analysis/
+
+# Python caches and test/tool state
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editor and OS metadata
+.vscode/
+.idea/
+.DS_Store
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Packaging metadata
+*.egg-info/
+
+# pika_ros and pyAgxArm are intentionally not ignored: the top-level
+# repository records them as submodules. Their internal generated files are
+# governed by each repository's own Git boundary and ignore rules.

@@ -1,0 +1,24 @@
+# Keep the build context small. Runtime source is bind-mounted by Compose.
+**/.git
+**/.git/**
+**/__pycache__
+**/__pycache__/**
+**/.pytest_cache
+**/.pytest_cache/**
+**/build
+**/build/**
+**/install
+**/install/**
+**/log
+**/log/**
+.analysis
+.analysis/**
+*.pyc
+*.pyo
+*.egg-info
+*.so
+
+# The Dockerfile consumes these verified, local artifacts explicitly.
+!pika_ros/source/install.zip
+!pika_ros/source/librealsense-2.55.1.zip
+!pika_ros/source/curl-7.75.0.zip

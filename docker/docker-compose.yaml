@@ -1,0 +1,57 @@
+services:
+  pika:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        ROS_DISTRO: humble
+    image: pika-data:humble
+    init: true
+    stdin_open: true
+    tty: true
+    # Keep colcon's default build/install/log bases inside the ROS workspace,
+    # where the named volumes below are mounted.
+    working_dir: /workspace/Pika_data/pika_ros
+    entrypoint: /usr/local/bin/pika-entrypoint
+    command: ["bash"]
+
+    # Host networking keeps ROS 2 DDS discovery usable with a host-side
+    # process. No device or privileged access is enabled by default.
+    network_mode: host
+    shm_size: "2gb"
+
+    environment:
+      ROS_DISTRO: humble
+      ROS_VERSION: "2"
+      ROS_PYTHON_VERSION: "3"
+      ROS_DOMAIN_ID: "${ROS_DOMAIN_ID:-0}"
+      RMW_IMPLEMENTATION: "${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
+      ROS_LOCALHOST_ONLY: "${ROS_LOCALHOST_ONLY:-0}"
+      DISPLAY: "${DISPLAY:-}"
+      QT_X11_NO_MITSHM: "1"
+      PIKA_VENDOR_PREFIX: /opt/pika/vendor/install
+      PIKA_WS: /workspace/Pika_data/pika_ros
+      PIKA_DATA_DIR: /workspace/data
+      PYTHONUNBUFFERED: "1"
+
+    volumes:
+      # Source remains on the host and is always visible to the container.
+      - ..:/workspace/Pika_data:rw
+      # Keep generated colcon state out of the source bind mount.
+      - pika_build:/workspace/Pika_data/pika_ros/build
+      - pika_install:/workspace/Pika_data/pika_ros/install
+      - pika_log:/workspace/Pika_data/pika_ros/log
+      - pika_data:/workspace/data
+      # Needed only for GUI clients such as RViz; harmless on standard Ubuntu
+      # hosts and can be removed for headless deployments.
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+
+    # Hardware is opt-in. For example, pass --device=/dev/bus/usb and/or
+    # --privileged to `docker compose run` only during a separately approved
+    # hardware test. This file never edits host udev, CAN, or network state.
+
+volumes:
+  pika_build:
+  pika_install:
+  pika_log:
+  pika_data:

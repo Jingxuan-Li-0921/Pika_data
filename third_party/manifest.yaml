@@ -1,0 +1,95 @@
+schema_version: 1
+
+# All repository commits below are the commits actually checked out in this
+# workspace.  Parent-repository gitlinks take precedence over remote branch tips.
+pika_ros:
+  url: https://github.com/agilexrobotics/pika_ros.git
+  branch: ros2
+  commit: 9f469895bd816e408616ab5cbf5112ba3fd5191a
+  path: pika_ros
+  role: primary_ros2_workspace
+
+data_msgs:
+  url: https://github.com/agilexrobotics/data_msgs.git
+  branch: ros2
+  commit: 0405bbaad280e0d076850fce73cdfac473c202ca
+  path: pika_ros/src/data_msgs
+  relation: pika_ros_submodule
+
+data_tools:
+  url: https://github.com/agilexrobotics/data_tools.git
+  branch: ros2
+  commit: 1363e0579ad6cb3980f65e200a3c536481c819ab
+  path: pika_ros/src/data_tools
+  relation: pika_ros_submodule
+
+PikaAnyArm:
+  url: https://github.com/agilexrobotics/PikaAnyArm.git
+  branch: ros2
+  commit: 651ffe1a9a8478801c6f055ffe069bd4989da40f
+  path: pika_ros/src/PikaAnyArm
+  relation: pika_ros_submodule
+  note: The parent gitlink is authoritative; the .gitmodules file does not declare a branch.
+
+agx_arm_ros:
+  url: https://github.com/agilexrobotics/agx_arm_ros.git
+  branch: ros2
+  commit: 77882f4305c5e169b4542b408ac9f6755bdfa7c8
+  path: pika_ros/src/PikaAnyArm/agx_arm/agx_arm_ros
+  relation: independent_nested_repository
+
+agx_arm_urdf:
+  url: https://github.com/agilexrobotics/agx_arm_urdf.git
+  branch: main
+  commit: f6642ce0d7872c686f29c99e9e10cd23d1d49313
+  path: pika_ros/src/PikaAnyArm/agx_arm/agx_arm_ros/src/agx_arm_description/agx_arm_urdf
+  relation: agx_arm_ros_submodule
+  parent_gitmodules_branch: main
+  markdown_requested_branch: flattened
+  markdown_branch_commit: 9ffe0cdb26b8bb03b84a648f3cd119822049f2e7
+
+pyAgxArm:
+  url: https://github.com/agilexrobotics/pyAgxArm.git
+  branch: master
+  commit: 2255d88e1fabdf20fcd1eccbc4312b4ce1cfd2d4
+  path: pyAgxArm
+  relation: independent_repository
+
+source_artifacts:
+  install_zip:
+    path: pika_ros/source/install.zip
+    size: 72167676
+    sha256: 522cc1d8721586cb9a8ff02129bf887718eb6f4b700f20e1ffe61a528ce2899d
+  librealsense:
+    path: pika_ros/source/librealsense-2.55.1.zip
+    version: 2.55.1
+    size: 58961952
+    sha256: c5d8bcbeccd897bd0b4f2b060dfea2af4d6ba6097e79c7b6760b11139a14f4d2
+  curl:
+    path: pika_ros/source/curl-7.75.0.zip
+    version: 7.75.0
+    size: 6123757
+    sha256: aff8be4b99bb64cbae1a677695e7b8311959e22b6b9ff43c9132679290b060f2
+
+verified_install_payload:
+  archive_root: install/
+  colcon_install_layout: isolated
+  archive_member_count: 1819
+  ros_packages:
+    - data_msgs
+    - data_tools
+    - pika_locator
+    - pika_remote_agx_arm
+    - realsense2_camera
+    - realsense2_camera_msgs
+    - realsense2_description
+    - sensor_tools
+  non_ros_prefixes:
+    - libsurvive
+  contains_precompiled_x86_64_elf: true
+  runtime_elf_count: 75
+  highest_glibc_symbol: GLIBC_2.34
+  highest_glibcxx_symbol: GLIBCXX_3.4.30
+  rpath_observed: false
+  runpath_contains_build_machine_paths: true
+  relocation_requires_path_normalization: true
