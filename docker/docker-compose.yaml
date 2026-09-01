@@ -19,6 +19,10 @@ services:
     # process. No device or privileged access is enabled by default.
     network_mode: host
     shm_size: "2gb"
+    ulimits:
+      # ROS nodes should log failures instead of leaving multi-gigabyte core
+      # files in the bind-mounted workspace.
+      core: 0
 
     environment:
       ROS_DISTRO: humble
@@ -42,6 +46,8 @@ services:
       - pika_install:/workspace/Pika_data/pika_ros/install
       - pika_log:/workspace/Pika_data/pika_ros/log
       - pika_data:/workspace/data
+      # Persist libsurvive settings/calibration written below /root/.config.
+      - pika_config:/root/.config
       # Needed only for GUI clients such as RViz; harmless on standard Ubuntu
       # hosts and can be removed for headless deployments.
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
@@ -55,3 +61,4 @@ volumes:
   pika_install:
   pika_log:
   pika_data:
+  pika_config:

@@ -1,0 +1,12 @@
+services:
+  pika:
+    # Hardware access is deliberately opt-in. Privileged mode permits device
+    # access, while the bind mount keeps host-created device nodes visible when
+    # USB devices disconnect, get a new bus/device number, and re-enumerate.
+    privileged: true
+    volumes:
+      - type: bind
+        source: /dev
+        target: /dev
+        bind:
+          propagation: rslave

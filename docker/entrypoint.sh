@@ -8,6 +8,7 @@ readonly vendor_prefix="${PIKA_VENDOR_PREFIX:-/opt/pika/vendor/install}"
 readonly workspace="${PIKA_WS:-/workspace/Pika_data/pika_ros}"
 readonly overlay_prefix="${PIKA_OVERLAY_PREFIX:-${workspace}/install}"
 readonly pyagxarm_root="${PIKA_PYAGXARM_ROOT:-/workspace/Pika_data/pyAgxArm}"
+readonly device_environment="${PIKA_DEVICE_ENV:-/root/.config/pika/device.env}"
 
 source_required() {
     local setup_file="$1"
@@ -53,6 +54,7 @@ source_required "${vendor_prefix}/setup.bash"
 # `local_setup.bash` adds only the local overlay. This preserves the explicit
 # order ROS base -> vendor underlay -> host-source overlay.
 source_optional "${overlay_prefix}/local_setup.bash"
+source_optional "${device_environment}"
 
 # The SDK source is bind-mounted, so Python imports follow host edits without
 # reinstalling pyAgxArm into the image.

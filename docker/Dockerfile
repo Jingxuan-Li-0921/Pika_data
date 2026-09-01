@@ -90,6 +90,7 @@ RUN apt-get update \
         ros-${ROS_DISTRO}-topic-tools \
         ros-${ROS_DISTRO}-xacro \
         unzip \
+        usbutils \
         zlib1g-dev \
     && locale-gen en_US.UTF-8 \
     && rm -rf /var/lib/apt/lists/*
@@ -102,10 +103,10 @@ RUN python3 -m pip install --no-cache-dir \
 
 WORKDIR /opt/pika
 
-# Build the exact librealsense version shipped with this workspace. The
-# graphical viewer and firmware download are deliberately disabled. The
-# non-graphical tools remain enabled so realsense2_camera can run its
-# rs-enumerate-devices configuration probe and provide diagnostics.
+# Build the exact librealsense version shipped with this workspace. Keep the
+# graphical examples enabled so realsense-viewer is available for USB link and
+# stream diagnostics; firmware download and unrelated optional integrations
+# remain disabled.
 COPY pika_ros/source/librealsense-2.55.1.zip /tmp/librealsense-2.55.1.zip
 RUN echo "${LIBREALSENSE_SHA256}  /tmp/librealsense-2.55.1.zip" | sha256sum -c - \
     && mkdir -p /opt/pika/src /opt/pika/build/librealsense \
@@ -115,15 +116,15 @@ RUN echo "${LIBREALSENSE_SHA256}  /tmp/librealsense-2.55.1.zip" | sha256sum -c -
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DCMAKE_INSTALL_LIBDIR=lib \
-        -DBUILD_EXAMPLES=OFF \
-        -DBUILD_GRAPHICAL_EXAMPLES=OFF \
+        -DBUILD_EXAMPLES=ON \
+        -DBUILD_GRAPHICAL_EXAMPLES=ON \
         -DBUILD_PYTHON_BINDINGS=OFF \
         -DBUILD_TOOLS=ON \
         -DBUILD_UNIT_TESTS=OFF \
         -DBUILD_LEGACY_LIVE_TEST=OFF \
         -DBUILD_WITH_CUDA=OFF \
         -DBUILD_WITH_OPENMP=OFF \
-        -DBUILD_GLSL_EXTENSIONS=OFF \
+        -DBUILD_GLSL_EXTENSIONS=ON \
         -DBUILD_RS2_ALL=OFF \
         -DCHECK_FOR_UPDATES=OFF \
         -DIMPORT_DEPTH_CAM_FW=OFF \
@@ -156,13 +157,27 @@ RUN echo "${PIKA_INSTALL_SHA256}  /tmp/pika-install.zip" | sha256sum -c - \
       done < <(find "${PIKA_VENDOR_PREFIX}" -type f -print0) \
     && vendor_rpath='$ORIGIN:$ORIGIN/../lib:$ORIGIN/../../lib:/opt/pika/vendor/install/lib:/opt/pika/vendor/install/libsurvive/lib:/opt/pika/vendor/install/pika_locator/lib:/opt/pika/vendor/install/pika_locator/lib/pika_locator:/opt/pika/vendor/install/pika_locator/lib/plugins:/usr/local/lib' \
     && while IFS= read -r -d '' payload_file; do \
-        if file -b "${payload_file}" | grep -Eq 'ELF.*(executable|shared object)' \
+        payload_type="$(file -b "${payload_file}")"; \
+        if grep -Eq 'ELF.*executable' <<<"${payload_type}"; then \
+          chmod 0755 "${payload_file}"; \
+        fi; \
+        if grep -Eq 'ELF.*(executable|shared object)' <<<"${payload_type}" \
             && readelf -d "${payload_file}" >/dev/null 2>&1; then \
           patchelf --set-rpath "${vendor_rpath}" "${payload_file}"; \
         fi; \
       done < <(find "${PIKA_VENDOR_PREFIX}" -type f -print0) \
     && rm -f /tmp/pika-install.zip \
     && ldconfig
+
+# setup_device.py needs the udev query client to discover the stable USB
+# ancestry. The daemon and host rules remain the host's responsibility.
+# The ROS Pinocchio build provides a NumPy-compatible kinematics runtime for
+# the SciPy IK fallback without replacing ROS's system NumPy/OpenCV packages.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ros-${ROS_DISTRO}-pinocchio \
+        udev \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY docker/entrypoint.sh /usr/local/bin/pika-entrypoint
 RUN chmod 0755 /usr/local/bin/pika-entrypoint
