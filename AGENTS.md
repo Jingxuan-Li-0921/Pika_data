@@ -1,321 +1,313 @@
-# Pika_data Project Context
+# Pika_data 项目上下文与代码导航
 
-这是 Codex 处理本项目时必须首先阅读的长期项目上下文文件。它同时是新窗口快速恢复指南和工程操作规范。
+## 0. 当前目标与新增实现（2026-10-24，本节优先于下方历史快照）
 
-- 如果代码与本文件冲突，以当前代码为准。
-- 如果硬件实际行为与文档冲突，以安全的实机验证和官方最新说明为准。
-- 不要根据旧手册自行猜测新版硬件行为；证据不足时明确标记 `UNKNOWN`。
+### 自动只读验收入口
 
-## 1. 项目主线与当前阶段
+- `pika_bimanual/check.py` / `check_rig`：devices/live/episode/lerobot 四模式 CLI、JSON/Markdown 报告、退出码 PASS=0/WARN=1/FAIL=2、禁止覆盖已有报告；HDF5 仅以 r 模式读取，逐帧图像质量统计不将整段图像载入内存。
+- `check_images.py`：共用逐帧像素摘要、近黑图、最长连续相同画面统计；0.5 秒连续相同为疑似冻结/静态场景 WARN，不能代替视觉验收。
+- `check_lerobot.py`：在独立 LeRobot 环境强制离线读取，重算因果索引、核对来源/manifest/rig 契约并逐帧比较 state/action/所有 RGB 像素/task/episode-frame-global index/时间戳；不局限于首中尾抽查，保留 preview/synthetic 警告。
+- 本轮修复：live 异常后保留时间戳高水位；文件拒绝源时间倒退；相机逐间隔估计掉帧，不仅看平均帧率；像素比较剔除行填充并统一颜色顺序。`camera_expected_hz` 默认 30 Hz，与当前硬件 launch 相机配置一致。
+- `test_check_camera_regressions.py` 对三个相机逐个注入掉一帧/局部像素冻结/时间戳冻结/倒退/NaN/未来/缺流；`test_check_lerobot.py` 使用真实库、两个 episode 和逐帧变化数据验证多种篡改。
+- `pika_bimanual/check_devices.py`：仅 stat/access、sysfs、`ip -j -details -statistics link show`；不打开字符设备、不配置 CAN、不校准；支持显式 synthetic 设备清单。
+- `pika_bimanual/check_live.py`：仅订阅 Image/JointState/PoseStamped；检查两侧执行端与 Sense、相机及因果同步；无运动 publisher、服务客户端或自动驱动启动。
+- `test/test_check.py`：设备别名/串号/CAN 异常，正常/缺图/错时/损坏/黑图/重复图/间隔数据，模拟时间流和真实隔离 ROS mock 订阅回归；静态限制检查模块不得引入运动接口。
+- 使用方法见 README 第二部分第 5 节。报告 PASS 不等于机械标定、真实左右映射或运动验收；人工待验事项与 synthetic 标记必须保留。
 
-项目目标：
+### 本轮复查修复（同日，优先于旧验证记录）
+
+- `pika_bimanual/teleop.py`：双侧 TCP/手柄时间差检查；`/pika/teleop_state` JSON 心跳包含 enabled/stamp/epoch，暂停立即通知下游。
+- `pika_bimanual/runtime.py`：遥操状态联锁、心跳失效关闭输出、重设基线后拒绝旧 IK；正式录制发生暂停/失效时终止为 partial，恢复不拼接。
+- 新增 `pika_bimanual/ik.py`：包装已安装的既有 IK 类，仅新入口使用 `guarded_ik`；按关节名重排反馈、检查反馈/目标年龄及求解后 FK 位姿残差，失败发布空目标使缓存失效。真实求解器仍来自 pika_remote_agx_arm，不复制或修改其子模块。
+- `pika_bimanual/storage.py`：固定字段集合、形状/单位/图像/时间检查；`inspect_episode` 在回放/转换前拒绝损坏、截断、不同步或非法动作的数据。
+- 新增 `pika_bimanual/export_lerobot.py`：HDF5 → 官方 LeRobot v3 image 数据集；独立 `lerobot==0.4.4` 环境，默认拒绝 preview，整帧按控制时间因果重采样，超限缺口报错，保存原始行/时间映射，finalize 后用官方读取器验证。保留 HDF5 原始档案；转换失败只留 partial，不上传 Hub。
+- 新增 `requirements-lerobot.txt`：独立转换环境依赖，不能装进 ROS Python；环境在 `.analysis/lerobot-venv`（容器路径创建），参考 README 安装/使用。
+- 新增 `test/test_audit.py`：错相三相机、损坏文件、字段漂移、重采样和真实 LeRobot 往返；`test/test_ik_offline.py`：真实 Pinocchio/SciPy 可达/不可达目标及乱序反馈。
+- `test/test_runtime_control.py`：暂停关闭输出、正式录制中止、心跳过期/旧基线目标拒绝；`test/test_serial_offline.py` 增加静默伪串口及退出检查。
+- `sensor_tools/src/serial_gripper_imu.cpp`：接收前 poll 最多等待 20 ms，避免静默串口无限占住命令互斥锁并阻止退出；仍不宣称覆盖真实 USB 拔插/固件故障恢复。
+- 复查日志：`.analysis/bimanual-audit-build.log`、`.analysis/bimanual-audit-test.log`、`.analysis/lerobot-roundtrip-test.log`。测试均无设备映射；真实模型和实机验收未执行。
+
+LeRobot 字段 `observation.state` / `action` 顺序仍是左右各 6 rad + 夹爪 m；原始 RGB uint8 HWC 转为官方读取器 CHW float32 0–1 时，在线模型适配器须作相同预处理。保存格式一致不等于模型已完成归一化或动作块适配。
+
+用户确认：双 Sense + Station Pro 示教，保留双 Piper，末端替换成双 Pika Gripper；采集与部署使用 Gripper 左右鱼眼，后续增加 RealSense D435 全局 RGB。Sense 的相机不进入策略观测。已授权代码修改和离线验证，未授权本轮执行实机运动。
+
+新增独立 ROS Python 包 pika_ros/src/pika_bimanual，保留旧入口，不把旧 Piper 原装夹爪启动文件直接改成新硬件。overlay 源码包数由 11 增至 12。
+
+### 0.1 为什么不能只改相机 topic
+
+- 旧链路把六轴和 gripper 一并交给 Piper CAN 原装夹爪，新 Pika Gripper 必须走独立 USB 串口。
+- 旧 open_multi_gripper 会自动开额外 D405，并有 Sense 数据直通夹爪的 remap；新 launch 显式拆分控制、观测、示教。
+- 旧固件 Command 和软件双击有双重 toggle 风险；新流程关闭固件触发并使用幂等 SetBool 遥操开关及独立录制服务。
+- 旧 HDF5 转换会裁剪夹爪维度，采集和部署没有共同 observation 定义；新包直接使用统一 14 维状态/动作 + 2/3 路 RGB 的版本化格式。
+- 替换末端后，旧 0.13 m TCP 不再是可信标定；默认配置留空，硬件 launch 要求明确填写。
+
+### 0.2 新文件职责（相对 pika_ros/src/pika_bimanual）
+
+| 文件 | 职责 |
+| --- | --- |
+| config/rig.yaml | 单一设备/topic/同步/限速/模型配置；D435 默认关闭，标定默认未确认 |
+| launch/rig.launch.py | 默认不启硬件；hardware 显式启 Piper、Sense/Gripper、鱼眼和可选 D435；policy 模式不启 Sense/定位/IK |
+| pika_bimanual/core.py | 不依赖 ROS 的字段排序、宽度验证、时间戳缓冲/同步、observation、示教 target、限位/限速门、模型 factory |
+| pika_bimanual/teleop.py | 双侧幂等 clutch；共同捕获新手柄/TCP 基线；保留原定位时间戳；数据过期暂停 |
+| pika_bimanual/runtime.py | ROS 适配、共用 RGB 处理、目标路由、门控、录制服务、policy 调用和状态统计 |
+| pika_bimanual/storage.py | 流式 HDF5、独占编号、partial 完成提交、元数据及离线读取 |
+| pika_bimanual/mock.py | 无设备的模拟相机/关节/定位输入；不创建真实控制 publisher |
+| pika_bimanual/replay.py | 从保存的 observation 调用策略，验证契约并输出预测；不发布 ROS 命令 |
+| test/test_core.py | 维度/顺序、过期与同步、门控、文件防覆盖、回放 |
+| test/test_launch.py | 默认无硬件、模式互斥、TCP 和 D435 序列号要求 |
+| test/test_ros_offline.py | 实际 ROS launch、三相机、HDF5、teleop/policy、预览无物理命令 |
+| test/test_runtime_control.py | 内存 publisher 验证六轴/夹爪分流、失效关闭、幂等双侧基线 |
+| test/test_serial_offline.py | 编译后的 serial_gripper_imu + 伪串口；设备绝对别名、空/NaN 命令、输出门和位置协议 |
+| setup.py、setup.cfg、package.xml、resource/ | ament_python 安装与依赖 |
+| .gitignore | 排除 pycache、pytest 和 egg-info 等构建产物 |
+
+顶层 scripts/run.py 新增 bimanual（teleop/policy、mock、hardware、allow-output、config、preview-recording）和 bimanual-test（无设备、隔离 ROS domain 87）。
+
+sensor_tools/src/serial_gripper_imu.cpp 的最小兼容修改：
+- realpath 正确解析相对/绝对设备别名，替代不保证 NUL 终止并硬拼 /dev 的 readlink 用法。
+- jointStateCtrlHandler 拒绝空 position 与非有限 position/effort/velocity。
+- accept_commands、command_events_enabled 默认 true 保持旧入口；新 launch 明确关闭 Sense 控制和固件事件，Gripper 仅在允许输出的硬件模式接受命令。
+- accept_commands=false 不等于纯被动监听：驱动启动仍有电流配置/LED 等管理写入。没有更改固件协议或重写原串口线程。
+
+### 0.3 新链路与数据契约
+
+示教：Sense 位姿 → 新 clutch → 既有 Pinocchio/SciPy IK → 六轴目标；Sense 宽度独立进入目标组装。
+观测：Piper 编码器六轴 + Pika Gripper 实测宽度 + Gripper 两路鱼眼 + 可选 D435。
+目标/反馈齐全且新鲜 → 限位/初始误差/时间与速度/跟踪检查 → Piper 六轴 topic + Pika Gripper 单宽度串口 topic。
+
+固定顺序：left_joint1..left_joint6,left_gripper,right_joint1..right_joint6,right_gripper。六轴 rad，宽度 m；action 是绝对位置，不是 delta/TCP。
+images 为 RGB uint8 HWC，尺寸由 image_size 决定；数据集与部署共用转换和同步。启用全局相机后缺帧直接拒绝，不自动改成两相机。
+同步取各流最新时间中的最早值作为 anchor，并选择不晚于 anchor 的样本，限制时间差与年龄；属于软件时间对齐。
+state 严格来自执行端反馈；Sense 不进入模型 observation。保留各观测源、示教源和控制发布时间戳，便于核对时延。
+action 为经过守卫的已发布位置；预览时为目标值并记录 preview_only。command_published 不是硬件执行确认。
+episode 使用独占 .partial，完成后链接为 .hdf5，不覆盖已有文件；中断保留 partial，后续自动跳过已使用编号。start/stop 幂等。
+policy_factory 默认为 HoldPolicy，仅接口测试；接入实际模型需实现 predict(observation)->14维动作并安装所需依赖。没有训练模型、权重或训练器；LeRobot 转换入口见本轮复查说明。
+新 pipeline 不使用旧 DataCapture/CaptureService，避免旧格式转换与新动作维度冲突；旧工具保留供原配置使用。
+
+### 0.4 控制与服务
+
+- /pika/teleop_enable（SetBool）：同时启停左右目标计算，恢复时重设基线；不是机械臂使能。
+- /pika/enable_output（SetBool）：软件输出门；默认关闭，hardware_output=false 时不能开启。
+- /pika/record/start、/pika/record/stop（Trigger）：独立录制，默认拒绝未开放输出的正式录制。
+- /pika/target、/pika/command（JointState）：14 维期望目标与实际发布命令。
+- /pika/status（String JSON）：模式、输出门、录制状态、已存帧数、丢弃计数和最近错误。
+- Piper 保持 effector_type=none、auto_enable=false、control_enabled=false；真实运动仍需现场单独使能两臂与驱动门。
+- 新方案不自动响应 Sense 固件 Command 或旧软件双击；不要同时启动旧 teleop/collect。
+
+### 0.5 已验证与仍需实机确认
+
+已完成新包及 sensor_tools 的 colcon 编译、Python 语法检查，以及单元、ROS 模拟、命令分流、伪串口离线验证。sensor_tools 仍有原有 signedness/unused 等编译警告，编译成功不代表串口硬件验收。
+未启动真实机械臂、CAN、Pika 串口、鱼眼或 D435。正式上机前还需：
+1. 测量新 TCP 和检查左右设备映射；当前 config 共用工具几何，左右安装不同需分侧外参。
+2. 提供 D435 真实序列号、检查三 USB 视频流带宽/曝光/时间差。
+3. 验证 Pika Gripper 电流、宽度零点/方向/限幅与断流保持行为。
+4. 完成低幅运动、录制质量和实际模型策略验收。
+5. 双臂互碰撞/环境避障未实现；软件门/限速不是完整安全控制系统。
+6. 串口接收增加 poll 有界等待，伪串口覆盖静默输入/命令/退出，仍未覆盖所有真实拔插与设备恢复场景。
+7. 当前鱼眼旧驱动 CameraInfo 未提供真实内参；训练 RGB 不假设已有相机标定，几何任务需另行标定。
+8. 数据格式与模型输入已统一，但闭环模型效果、模型动作块时序、训练框架转换尚取决于后续选择的模型。
+
+---
+
+下方为上一轮原装夹爪方案的代码地图与历史快照；涉及“当前入口/配置”的表述只适用于旧 teleop/collect，不覆盖上述新 bimanual 方案。
+
+
+
+本文供后续开发与代码修改使用；操作步骤见 README.md。最后核对：2026-10-24。
+以当前源码为准；源码确认、软件运行检查和实机验证必须分别陈述，不把历史记录当作当前验收结果。
+
+## 1. 项目目标与当前实现
+
+双 Pika Sense + Station Pro 提供定位和手柄输入，通过 ROS 2 Humble 控制双 AgileX Piper（原装夹爪），并采集示范数据，供后续模仿学习/VLA 使用。
+当前主入口是宿主机 scripts/run.py。项目已有直接遥操、隔离目标的 dry-run、独立守卫版和服务式采集；不是早期仅有单臂的状态。
+
+当前入口对应关系（必须按实际 include 链判断，不能只读 help 或注释）：
+
+| 宿主机入口 | ROS launch | 实际行为 |
+| --- | --- | --- |
+| teleop-dry-run | teleop_double_piper_dry_run.launch.py | 双臂反馈驱动 + Sense/定位 + SciPy IK；目标仅发 /dry_run；默认不启相机 |
+| teleop | teleop_double_piper_runtime.launch.py | 相机/串口/定位 + teleop_double_piper.launch.py；直接控制，auto_enable=true |
+| collect | collect_double_piper.launch.py | 上述直接遥操 + 双臂采集服务；不是 guarded |
+| capture | data_tools/run_dual_pika_piper_capture.launch.py | 只启动采集服务，不启动传感器或机械臂 |
+| 无专用 run.py 子命令 | teleop_double_piper_guarded.launch.py | dry-run + 左右 joint_command_guard；默认控制门关闭 |
+
+run.py 中 collect 的 help 仍写 guarded，属于过时文字。直接版的 control=false 仅关闭 RViz 侧关节发布，不等于驱动的 control_enabled=false；驱动该参数默认为 true。
+
+## 2. Host / Docker 边界
+
+- Host：Ubuntu 20.04；负责 Docker、内核、USB、udev、SocketCAN 命名/bitrate、X11。
+- Container：Ubuntu 22.04 + ROS 2 Humble，镜像 pika-data:humble；负责 ROS、定位运行库、IK、pyAgxArm、相机用户态库和采集。
+- 不在容器内直接执行历史 udev/CAN 安装脚本。setup-device 由容器发现设备，宿主机安装生成的规则。
+- 无参数 run.py 等价于 shell --hardware；显式 shell 默认不带硬件。
+- 硬件 Compose 启用 privileged 并动态挂载整个 /dev；基础 Compose 使用 host 网络但不启用 privileged。
+- 环境叠加：/opt/ros/humble → /opt/pika/vendor/install → pika_ros/install/local_setup.bash → bind-mounted pyAgxArm。
+- device.env 位于容器 /root/.config/pika/device.env，entrypoint 自动加载 pika_L_code/pika_R_code。
+- libsurvive 校准位于 /root/.config/libsurvive。
+
+| 容器路径 | 来源/含义 |
+| --- | --- |
+| /workspace/Pika_data | 宿主机项目 bind mount，读写源码实时互通 |
+| /workspace/Pika_data/pika_ros/build、install、log | 三个独立 named volumes，遮蔽宿主机同名目录 |
+| /workspace/data | pika_data named volume，采集输出 |
+| /root/.config | pika_config named volume，定位标定和设备变量 |
+
+本机实际卷名为 docker_pika_build/install/log/data/config。Compose project 名改变时卷名前缀可能变化；不要硬编码为通用规则。run --rm 只删除临时容器，不删除这些卷。禁止无目的 down -v 或删除数据/校准卷。
+
+## 3. 顶层目录与文件
+
+| 路径 | 职责 |
+| --- | --- |
+| docker/Dockerfile | ROS Humble 基础镜像；安装编译/ROS/采集依赖；编译 librealsense 2.55.1；校验并解压 vendor install.zip，修复旧绝对路径、shebang 和 ELF RUNPATH；安装 ROS Pinocchio |
+| docker/docker-compose.yaml | 基础开发容器、host 网络、源码挂载和持久卷 |
+| docker/docker-compose.hardware.yaml | 硬件访问覆盖配置 |
+| docker/entrypoint.sh | 按顺序加载 ROS/vendor/overlay/device.env，设置 SDK 和定位库搜索路径 |
+| scripts/run.py | 宿主机命令入口、Compose 封装、X11 临时授权、设备安装、双臂预检和启动路由 |
+| pika_ros/ | ROS 2 workspace，顶层 Git submodule |
+| pyAgxArm/ | Python SDK，顶层 Git submodule |
+| third_party/manifest.yaml | 初始第三方版本、归档哈希及 vendor 内容记录；其中源码 commit 已落后于当前 gitlink，不是当前版本锁定结果 |
+| .gitmodules | 顶层 submodule 地址 |
+| .gitignore、.dockerignore | Git 与镜像构建上下文排除规则 |
+| .analysis/ | 忽略的分析及设备绑定产物；非正式源码，但 device_setup/ 是 setup-device 的实际输出，不可笼统当作可删缓存 |
+| Pika 产品用户手册 beta（CN） ROS2-V2遥操测试版.md | 历史厂商参考；不能覆盖当前代码和硬件型号差异 |
+| AGENTS.md | 代码地图、开发约束、当前事实和待核对项 |
+| README.md | 环境配置与使用方法，不重复项目结构 |
+
+## 4. ROS workspace 与包
+
+pika_ros/source/ 保存 install.zip、librealsense-2.55.1.zip、curl-7.75.0.zip 等来源归档；日常启动不重复解压。
+pika_ros/scripts/ 为设备配置与历史便捷脚本；其中 data_sync.py/data_to_hdf5.py 与 data_tools/scripts/ 下版本不同，不能混用参数和工作目录。
+
+源码 overlay 有 11 个 ROS package：
+
+| 包及路径（相对 pika_ros/src） | 职责 |
+| --- | --- |
+| sensor_tools/ | serial_gripper_imu.cpp 解析 Sense 串口、发布手柄/夹爪状态、触发遥操与录制；launch 管理串口、D405、鱼眼和定位 |
+| data_msgs/ | Gripper、CaptureStatus 等消息与 CaptureService.srv 等服务定义 |
+| data_tools/ | C++ 原始数据采集/同步/回放及 Python HDF5、MCAP、LeRobot 工具 |
+| PikaAnyArm/agx_arm/pika_remote_agx_arm/ | 位姿映射、IK、双手触发协调、命令守卫及遥操 launch |
+| PikaAnyArm/agx_arm/agx_arm_ros/src/agx_arm_ctrl/ | ROS 与 SDK 桥接，机械臂/夹爪控制、反馈及服务 |
+| 同级 agx_arm_description/ | URDF/Xacro/mesh；agx_arm_urdf/ 是嵌套 submodule |
+| 同级 agx_arm_msgs/ | 机械臂、夹爪、灵巧手消息 |
+| 同级 agx_arm_moveit/ | MoveIt 配置与轨迹控制相关资源 |
+| realsense-ros/realsense2_camera/ | D405 等 RealSense ROS 驱动 |
+| realsense-ros/realsense2_camera_msgs/ | 相机消息 |
+| realsense-ros/realsense2_description/ | 相机描述 |
+
+pika_locator 与 libsurvive 来自 vendor underlay；当前仓库不能完整审计定位器内部二进制实现。
+
+### 遥操关键文件
+
+以下均相对 pika_ros/src/PikaAnyArm/agx_arm/pika_remote_agx_arm/：
+
+- launch/teleop_double_piper_runtime.launch.py：绑定本机双 Sense 输入，组合直接遥操；相机默认开启。
+- launch/teleop_double_piper.launch.py：双臂驱动、两个 delta 节点、两个 IK、右手协调器和软件双击检测；auto_enable=true、fast_mode=true。
+- launch/teleop_double_piper_dry_run.launch.py：反馈模式驱动、无 GUI 定位器及隔离目标；默认关闭相机。
+- launch/teleop_double_piper_guarded.launch.py：在 dry-run 上增加左右命令守卫；默认速度参数 10、目标发布 30 Hz。
+- launch/collect_double_piper.launch.py：直接版 + 采集服务。
+- launch/teleop_single_*、teleop_double_nero*、teleop_double_piper_x*：其他机型/历史入口，不是当前双 Piper 默认入口。
+- scripts/pub_delta_pose.py：缓存手柄与 TCP 位姿；Trigger 切换 teleop_active；以基线乘手柄相对变换发布目标，默认 30 Hz。暂停只停止目标发布，不等于机械臂去使能。
+- scripts/arm_ik_pose_node.py：Pinocchio 模型、IK 求解、FK 输出；auto 在 CasADi bindings 可用时使用 CasADi，否则回退 SciPy；直接版还把手柄宽度附加到关节命令。
+- scripts/dual_teleop_coordinator.py：/teleop_trigger_r 并行调用左右 internal Trigger。
+- scripts/sense_double_click_trigger.py：从右手 joint_state 检测开合双击，仅请求遥操 Trigger，不调用 CaptureService。
+- scripts/joint_command_guard.py：初始误差、关节步长、跟踪误差、输入/反馈超时与启用门；只有 guarded launch 接入。
+- config/arm_ik_pose_node.piper.yaml：Piper URDF、六轴输出、TCP z=0.13 m、优化权重与 solver_backend=auto；自碰撞检查当前 false。
+- scripts/transformations.py、test_piper_sim.py：变换辅助与仿真调试；不能据文件名把后者当作无硬件风险的完整测试套件。
+
+### 驱动、设备与 SDK
+
+- agx_arm_ctrl/agx_arm_ctrl_single_node.py：AgxArmRosNode；按 joint name 分离六轴与 gripper；fast_mode 使用 move_js，否则 move_j。
+- agx_arm_ctrl/effector/agx_gripper.py：原装夹爪封装（具体适配以当前文件为准）。
+- agx_arm_ctrl/launch/start_double_piper_diagnostic.launch.py：auto_enable=false、control_enabled=false。SDK 仍可能发送查询帧，不能称为电气意义的纯被动 CAN 监听。
+- sensor_tools/launch/open_multi_sensor.launch.py：左右串口、相机、locator 参数与服务 remap。
+- pika_ros/scripts/setup_device.py：交互识别左右设备、生成规则/manifest/启动脚本、保存定位码；入口应使用顶层 run.py setup-device。
+- pyAgxArm/pyAgxArm/api/、protocols/、extensions/、utiles/：SDK API、协议、扩展与工具；demos/、scripts/、tests/ 中可能包含真实运动/CAN 配置，不能批量直接运行。
+
+## 5. 当前双臂调用链与接口
 
 ```text
-Pika Sense + Pika Station Pro
-  -> 空间定位 / 手柄状态
-  -> ROS2 Humble 遥操作
-  -> AgileX Piper + 原装夹爪
-  -> 机器人示范数据采集
-  -> VLA / imitation learning
-  -> 模型部署
-  -> ROS1 / ROS2 adapter
+Station Pro / Sense tracker → libsurvive → pika_locator
+  /pika_pose_l、/pika_pose_r
+    → pub_delta_pose + /left_arm|right_arm/feedback/tcp_pose
+    → /left_delta_pose、/right_delta_pose
+    → arm_ik_pose_node + feedback/joint_states + gripper_l|r/joint_state
+    → /left_arm|right_arm/control/joint_states
+    → AgxArmRosNode → pyAgxArm → SocketCAN → Piper / 原装夹爪
 ```
 
-Docker 基础环境已基本完成。当前核心目标已经转为：
-
-```text
-真实硬件接入 -> 定位校准 -> Piper 遥操 -> 数据采集 -> VLA 训练和部署
-```
-
-用户问“下一步怎么做”时，默认沿这条主线继续，除非用户明确切换任务。
-
-## 2. Host / Container 架构边界
-
-Host 是 Ubuntu 20.04，负责：
-
-- Linux kernel、Docker daemon、USB、`/dev`、udev
-- SocketCAN、USB-CAN、CAN interface 创建/命名/bitrate
-- RealSense/Sense/Vive USB 权限、X11 和真实硬件
-
-Container 是 Ubuntu 22.04 + ROS2 Humble，负责：
-
-- ROS2、Pika runtime、`pika_locator`、libsurvive
-- librealsense userspace、pyAgxArm、teleop、data capture
-
-不要把 Host 的 kernel、udev、CAN 职责塞进容器。不要因为容器是 root，就在容器内执行 Host udev/CAN 初始化脚本。仓库中的相关脚本带有历史机器的 USB 拓扑假设。
-
-## 3. 关键目录
-
-```text
-Pika_data/
-├── docker/                 # Dockerfile、Compose、entrypoint
-├── scripts/run.py          # 统一运行入口
-├── third_party/            # 第三方版本记录
-├── pika_ros/               # ROS2 workspace submodule
-├── pyAgxArm/               # AgileX Python SDK submodule
-├── README.md
-├── .gitmodules
-└── AGENTS.md
-```
-
-- `third_party/manifest.yaml`：第三方依赖、commit 和嵌套关系记录。
-- `.analysis/`：Git ignored 的只读分析产物，不是正式运行源码。
-- 处理具体函数、topic、参数前，仍需读取当前源码，不能只依赖本文件。
-
-## 4. Docker 当前状态
-
-已完成并验证：
-
-- Ubuntu 22.04 + ROS2 Humble 镜像构建
-- librealsense 2.55.1
-- 官方 `install.zip` vendor underlay
-- vendor 旧路径、Python shebang、ELF RUNPATH 处理
-- Host source bind mount 和本地 colcon overlay
-- 11 个 ROS package 编译成功
-- doctor、ShellCheck、yamllint、Compose config 检查
-
-vendor underlay 位于 `/opt/pika/vendor/install`。环境叠加顺序是：
-
-```text
-/opt/ros/humble
-  -> vendor underlay
-  -> local pika_ros/install
-  -> bind-mounted pyAgxArm
-```
-
-libsurvive 校准保存在 `~/.config/libsurvive`，已通过 Docker volume 持久化。不要随意执行 `docker compose down -v`，它可能删除定位校准数据。
-
-### 已知 Docker 阻塞
-
-当前镜像审阅发现 CasADi、Pinocchio 可能尚未作为 teleop runtime 正确安装；`arm_ik_pose_node.py` 依赖它们。因此“11 个 ROS package 编译成功”不等于“teleop 可以运行”。
-
-启动 teleop 前先验证：
-
-```text
-python import casadi
-python import pinocchio
-arm_ik_pose_node.py runtime
-```
-
-优先做最小依赖修复，不要无理由大规模重建 Docker/vendor 方案。
-
-## 5. ROS2 package 结构
-
-源码 overlay 的 11 个 package：
-
-- `agx_arm_ctrl`：ROS2 与 pyAgxArm 的驱动桥、反馈、控制和服务。
-- `agx_arm_description`：Piper/Nero URDF、Xacro 和 mesh。
-- `agx_arm_moveit`：MoveIt2 配置和轨迹控制门。
-- `agx_arm_msgs`：机械臂、夹爪和灵巧手消息。
-- `pika_remote_agx_arm`：Pika pose -> delta pose -> IK -> Piper command。
-- `data_msgs`：采集、定位、gripper、instruction 等消息/服务。
-- `data_tools`：采集、同步、HDF5、MCAP、回放、LeRobot 转换。
-- `sensor_tools`：Sense、gripper、鱼眼相机和 RealSense 输入。
-- `realsense2_camera`、`realsense2_camera_msgs`、`realsense2_description`。
-
-vendor 提供 `pika_locator`、libsurvive、`survive-cli`。`pika_locator` 当前主要是预编译二进制，内部变换/滤波实现不能完整源码审计。
-
-## 6. Pika Sense 链路
-
-Sense serial 默认 460800 baud，主要输出：
-
-- `/gripper/data`
-- `/gripper/joint_state`
-
-launch 可能对它们重映射或加命名空间。Sense 的 `Command` 字段可触发 teleop Trigger service 和 `/data_tools_dataCapture/capture_service`。
-
-历史设备名包括 `/dev/ttyUSB50`、`60`、`61`、`70`，不能假设当前主机一致。实机接入时重新核对 `lsusb`、`/dev/ttyUSB*` 和 USB topology，再制定 Host udev 规则。
-
-## 7. Station Pro / locator 链路
-
-当前硬件是 **Pika Station Pro**：
-
-```text
-Station Pro -> Sense tracker -> libsurvive -> pika_locator -> PoseStamped
-```
-
-- 单手 pose：`/pika_pose`
-- 双手 pose：`/pika_pose_l`、`/pika_pose_r`
-- tracker code：`pika_locator/get_code.launch.py`
-- 双手 code：环境变量 `pika_L_code`、`pika_R_code`
-- 强制校准：`survive-cli --force-calibrate`
-- 校准结果：`~/.config/libsurvive`
-
-Pika Station Pro 的 channel 设置方式是 **UNKNOWN**。旧版手册的“不同频道”不能直接套用。除非官方、当前源码或安全实机验证给出明确证据，不要猜测 CAN、USB、SteamVR、libsurvive、自动频道或固定频道方案。
-
-## 8. Piper 控制链路
-
-核心 ROS 节点是 `AgxArmRosNode`。
-
-反馈：
-
-- `/feedback/joint_states`、`/feedback/tcp_pose`
-- `/feedback/arm_status`、`/feedback/gripper_status`
-- `/feedback/leader_joint_states`
-
-控制：
-
-- `/control/joint_states`
-- `/control/move_j`、`/control/move_js`
-- `/control/move_p`、`/control/move_l`、`/control/move_c`
-- `/control/move_mit`
-
-服务：
-
-- `/enable_agx_arm`、`/control_enable`
-- `/move_home`、`/emergency_stop`、`/exit_teach_mode`
-
-主控制链：
-
-```text
-/control/joint_states
-  -> AgxArmRosNode
-  -> pyAgxArm.move_js()
-  -> python-can -> SocketCAN -> USB-CAN -> Piper
-```
-
-pyAgxArm 公共接口中 joint 使用 rad、position 使用 m。Host SocketCAN 通常为 1 Mbps，但接口名和真实 bitrate 必须在 Host 确认。
-
-## 9. 单臂 teleop 调用链
-
-入口是 `teleop_single_piper.launch.py`：
-
-```text
-Station/Sense -> libsurvive -> pika_locator -> /pika_pose
-  -> pub_delta_pose.py
-     subscribes /pika_pose, /feedback/tcp_pose, /gripper/joint_state
-     publishes /delta_pose
-  -> arm_ik_pose_node.py
-     subscribes /delta_pose, /feedback/joint_states
-     uses Pinocchio + CasADi + IPOPT
-     publishes /control/joint_states, /ik_fk_pose
-  -> agx_arm_ctrl -> pyAgxArm -> SocketCAN -> Piper
-```
-
-安全事实：该 launch 当前默认 `auto_enable=true`，不能直接作为首次实机安全诊断入口。
-
-### 当前夹爪缺口
-
-Sense gripper -> Piper 原装夹爪没有完整接通。`pub_delta_pose.py` 中相关转换/发布代码被注释，IK 只输出 `joint1...joint6`。不能认为 Piper 原装夹爪已经能被 Sense 遥控。
-
-## 10. 数据采集能力与格式
-
-已有：`DataCapture`、`DataCaptureService`、`DataSync`、`data_to_hdf5.py`、`DataPublish`、MCAP、HDF5 和 LeRobot 2.1 转换。
-
-可采集 RGB、depth、point cloud、joint state、end pose、locator pose、gripper、IMU、force、ndarray、lidar、base odometry、instruction 和 TF。
-
-原始格式：
-
-- RGB `.jpg`；Depth `.png`；Point cloud `.pcd`
-- Joint/Pose/Gripper/IMU `.json`；Array `.npy`
-- 使用 ROS header timestamp；最近邻同步默认 tolerance 约 30 ms
-- 采集端保存各 topic 原生频率，不强制全部 topic 为同一 Hz
-
-### 数据采集未完成项
-
-1. 现有 YAML topic 与单 Sense + Piper 实际 topic 不完全匹配。
-2. teleop-only sensor launch 不启动相机。
-3. Piper 原装夹爪状态与现有 `data_msgs/Gripper` 配置不同。
-4. Sense -> Piper gripper bridge 缺失。
-5. dataset schema/version 和 episode metadata 尚未稳定。
-6. LeRobot observation/action mapping 尚未最终审计。
-7. **HIGH RISK：重复 episode index 时，DataCapture 可能递归删除旧 episode。正式采集前优先修复。**
-
-## 11. 模型部署原则
-
-训练数据当前来自 ROS2，但模型以后可部署到 ROS1。policy core 不应直接依赖 `rclpy` 或 `rospy`。
-
-稳定定义 observation、action、坐标系、单位、timestamp、frequency 和 image preprocessing，推荐结构：
-
-```text
-policy/
-ros1_adapter/
-ros2_adapter/
-```
-
-## 12. 硬件接入默认安全顺序
-
-1. Host USB inventory。
-2. 只连接 Station Pro + Sense。
-3. locator calibration。
-4. Sense input validation。
-5. Host SocketCAN 配置与只读检查。
-6. Piper read-only feedback：`auto_enable=false`、`control_enabled=false`。
-7. teleop dry run，只观察 pose、IK 和目标命令。
-8. 低风险、小幅、低速真实运动。
-9. 接通 gripper。
-10. data capture。
-
-验证坐标方向、TCP offset、joint limits、IK output、watchdog 和 physical emergency stop 前，不要开启真实运动。
-
-## 13. 风险登记
-
-HIGH：
-
-- CasADi/Pinocchio runtime 未确认
-- teleop `auto_enable=true`
-- episode overwrite/delete
-- Sense -> Piper gripper 缺失
-- acquisition YAML mismatch
-
-MEDIUM：
-
-- command watchdog 缺失
-- self-collision check disabled
-- workspace guard 缺失
-- udev rule 硬编码、CAN 命名不稳定
-- 坐标系尚未实机验证
-
-KNOWN BUG：双臂 Piper launch 中左右 `pub_delta_pose` 的 trigger service 配置有误。当前做单臂任务时不要顺手修改双臂代码，除非用户明确要求。
-
-UNKNOWN：Pika Station Pro channel configuration。
-
-## 14. Git / submodule 关系
-
-- 顶层：branch `main`，origin `https://github.com/Jingxuan-Li-0921/Pika_data.git`
-- `pika_ros`：branch `ros2`，基准 `9f469895bd816e408616ab5cbf5112ba3fd5191a`；origin 是用户 fork，upstream 是 AgileX 官方。
-- `pyAgxArm`：branch `master`，基准 `2255d88e1fabdf20fcd1eccbc4312b4ce1cfd2d4`；origin 是用户 fork，upstream 是 AgileX 官方。
-- `agx_arm_ros`：特殊嵌套仓库，branch `ros2`，commit `77882f4305c5e169b4542b408ac9f6755bdfa7c8`。
-
-不要破坏 `PikaAnyArm`、`data_msgs`、`data_tools`、`agx_arm_ros`、`agx_arm_urdf` 的版本关系。不要随意删除 `.git`、重新初始化 submodule、clean 或 reset。
-
-### Git 操作规则
-
-- 修改前运行 `git status`，修改后运行 `git diff`。
-- 不自动执行 `git reset --hard`、`git clean -fd`、`git checkout .`、`git restore .` 或 `git stash`。
-- 不自动 push；需要 commit 时先说明改动。
-- 修改 `pika_ros` 时，源码 commit 属于 `pika_ros` 自己的仓库；之后才在顶层更新 submodule gitlink。
-- 不要把 `pika_ros` 内部源码作为普通文件直接提交到顶层仓库。
-
-## 15. 硬件危险操作规则
-
-未经用户明确授权，禁止：
-
-- enable Piper 或发送 `move_j/move_js/move_p/move_l`
-- 发送原始 CAN frame
-- 执行 emergency-stop reset
-- 修改 firmware、Station 参数或 factory reset
-- 修改 Host udev/CAN 状态
-
-若用户明确要求真实运动，先检查 arm state、control gate、speed、workspace、physical emergency stop 和 requested trajectory，再以最小运动量验证。
-
-## 16. 新窗口工作流程
-
-1. 首先完整阅读本文件。
-2. 运行 `git status`，保护用户已有改动。
-3. 根据任务读取相关当前源码，不重复无目的扫描整个仓库。
-4. 已由本文件确认的架构可直接复用；具体函数、topic、参数和 Git 状态必须以当前代码复核。
-
-## 17. 默认后续优先级
-
-1. 验证并最小补齐 CasADi/Pinocchio runtime。
-2. 建立 Piper read-only/safe diagnostic launch。
-3. 配置当前 Host 的 USB/udev/CAN。
-4. Station Pro + Sense 校准并验证 `/pika_pose`。
-5. Piper feedback only；随后 teleop dry run。
-6. 增加 watchdog、speed limit、workspace guard。
-7. 开启低风险真实遥操作。
-8. 实现 Sense -> Piper 原装夹爪。
-9. 修正单臂采集 YAML 和 episode overwrite。
-10. 短 episode 完成 capture -> sync -> HDF5 -> playback 验收。
-11. 正式数据采集、VLA training、ROS1/ROS2 model deployment。
+- 手柄：/gripper_l/data、/gripper_r/data；/gripper_l/joint_state、/gripper_r/joint_state。
+- 驱动反馈：左右 /feedback/joint_states、/feedback/tcp_pose、/feedback/arm_status、/feedback/gripper_status，均在 left_arm/right_arm 命名空间下。
+- 直接版 FK：/left_arm/ik_fk_pose、/right_arm/ik_fk_pose。
+- dry-run 目标：/dry_run/left_arm/joint_target、/dry_run/right_arm/joint_target；FK 同目录 /fk_pose。
+- SDK 关节 rad、位置/夹爪宽度 m；直接版 Sense 宽度绝对值限幅至 0.09 m，附加 name=gripper。夹爪链路已经实现，不能再描述为“缺失”。
+- 右手软件双击：先张开到 >=0.07 m，再合到 <=0.02 m；两次合拢间必须重新张开，窗口 1.2 s，冷却 1 s。
+- /teleop_trigger_r 是切换语义，不是幂等 enable。协调器调用左右 /teleop_trigger_l_internal、/teleop_trigger_r_internal。
+- 串口固件 Command 变化也会触发遥操，并请求 CaptureService(start=true,end=true,episode_index=-1)。直接版右手 remap 到正式采集服务；左手映射到 capture_service_l。
+- 软件双击本身不启动录制。固件 Command 和软件检测若都响应同一动作，存在重复切换风险，需实机核对，不能声称已去重。
+- guarded/dry-run 使用左右独立 Trigger，且采集 remap 与直接版不同；dry-run IK 没有接入直接版 gripper topic，不能假定两套入口夹爪功能等价。
+
+## 6. 数据采集和转换
+
+| 文件（相对 pika_ros/src/data_tools） | 职责 |
+| --- | --- |
+| launch/run_dual_pika_piper_capture.launch.py | useService=true、allowEpisodeDelete=false、hz=-1、timeout=5、cropTime=1.0 |
+| config/dual_pika_piper_data_params.yaml | 当前双臂数据通道、逻辑名称与 topic |
+| src/dataCapture.cpp | DataCapture + DataCaptureService；按消息时间戳落盘，服务启动/结束 episode |
+| include/dataUtility.h | 公共目录/参数/通道结构 |
+| src/dataSync.cpp、scripts/data_sync.py | 时间同步；Python 版本读取 ../config，需在对应 scripts 目录运行 |
+| src/dataPublish.cpp、scripts/data_publish.py | 回放 |
+| scripts/data_to_hdf5.py | 同步数据转换 HDF5；参数是 --targetDir，支持 --armJointKeep；默认 useIndex=true 时输出到原 episode 目录，忽略 targetDir，并删除旧 data.hdf5 |
+| scripts/hdf5_to_lerobot.py、lerobot_compute_stats.py、merge_lerobot.py | LeRobot 转换、统计、合并；默认映射需针对双臂 schema 另行核对 |
+| scripts/record_mcap.py、hdf5_to_mcap.py、mcap_to_aloha_data.py | MCAP 相关工具 |
+| scripts/*-b.py | 备用/历史版本，不是 README 推荐入口 |
+
+当前配置记录：
+- 4 路彩色：左右 D405 + 左右鱼眼；2 路对齐 depth。
+- 关节：actionLeft/actionRight（控制命令）、feedbackLeft/feedbackRight（实测反馈）。
+- TCP：targetLeft/targetRight（IK FK）与 feedbackLeft/feedbackRight。
+- 定位：pika_l/pika_r；手柄编码器：pikaSensor_l/pikaSensor_r；instruction 文本。
+- 原始目录为 datasetDir/episodeN，下面按 camera/color、camera/depth、arm/jointState、arm/endPose、localization/pose、gripper/encoder 等分类。
+- RGB JPG、depth PNG、状态 JSON；保留各 topic 原生频率，离线同步默认容差 0.03 s。
+- 重复 episode 目录在构造时拒绝；删除服务默认禁用。旧文档中的“重复 index 自动删除旧 episode”已不符合当前实现。
+- episode_index=-1 表示使用服务内部计数，成功启动后递增；进程重启不扫描磁盘寻找下一个编号。
+- instructions 由 launch 参数进入服务并保存；当前服务开始分支使用成员 instructions，不使用请求里的 instructions/task_* 字段。
+- start=true/end=true 是切换；true/false 是开始（已有录制会先结束并重新开始）；false/true 是停止；false/false 是删除请求，默认拒绝。
+- cropTime 虽传入并保存，当前文件未发现实际裁剪使用，不能承诺自动裁掉首尾一秒。
+- HDF5 工具会处理/截取机械臂关节维度，不能默认等同于完整六轴+夹爪的训练 action。导出和 LeRobot 映射需单独检查。
+
+## 7. 当前机器与验证范围
+
+2026-10-24 SSH 检查：
+- 根项目及递归 submodule 修改前均干净。
+- pika-data:humble 镜像存在；无运行中的项目容器。旧 robot 容器使用 robot_image:v2，与本项目 Compose 环境不同。
+- run.py doctor 通过：ROS Humble、vendor、overlay、pyAgxArm、python-can、Pinocchio、SciPy。
+- device.env 保存左 LHR-B721731E、右 LHR-7485B857，libsurvive/config.json 存在。
+- 当前 can_left/can_right、ttyUSB50/51、video50/51 不存在；不能据此确认硬件当前可运行。
+- /workspace/data 检查时为空；本轮未做实际遥操、录制或转换验收。
+- 直接版固定 D405 左 _260522276587、右 _260522272396；setup-device 不会自动重写 runtime launch 中硬编码的相机序列号。
+- Station Pro 频道设置方法仍 UNKNOWN；不要套用旧硬件手册猜测。
+
+版本快照（后续以 git submodule status --recursive 为准）：
+
+| 仓库 | 分支/commit |
+| --- | --- |
+| 顶层 | main / 677079a（本轮文档修改前） |
+| pika_ros | ros2 / 3fc64340f5431557cb44e110329640eb69632cb7 |
+| PikaAnyArm | pika-dual-teleop / 852063e142fb5692284df1190d417b27ad4ce017 |
+| agx_arm_ros | pika-dual-teleop / 457212a13d16528cdacee3e9ec3ce4acd274aad0 |
+| agx_arm_urdf | main / f6642ce0d7872c686f29c99e9e10cd23d1d49313 |
+| data_msgs | 0405bbaad280e0d076850fce73cdfac473c202ca |
+| data_tools | pika-dual-capture / b2b952a57a0dea91da1369df964a0cbef7c1ab80 |
+| pyAgxArm | master / 2255d88e1fabdf20fcd1eccbc4312b4ce1cfd2d4 |
+
+## 8. 后续修改约束与待核对项
+
+- 开始先读本文件、查看所有相关仓库 git status，再读对应源码。修改后检查 diff；不要覆盖用户已有修改。
+- 不自动 git reset/clean/restore/stash，不删除 .git、不重初始化嵌套仓库，不自动 commit/push。
+- 源码修改属于对应 submodule 仓库，父仓库随后更新 gitlink；不要把 submodule 内容作为顶层普通文件提交。
+- 未明确授权不启动真实遥操、不使能机械臂、不发送运动或原始 CAN 命令、不重置急停/固件、不修改宿主机 udev/CAN。该历史阶段只授权文档更新；本轮以第 0 节的新授权为准。
+- 直接版绕过 joint_command_guard，不能把守卫的超时/步长保护写成所有入口都具备。
+- 协调器一侧失败后无完整回滚；软件双击与固件 Command 可能重复触发；暂停不是去使能。后续需求涉及切换语义时优先审计。
+- pub_delta_pose 缓存位姿缺少输入新鲜度校验；当前自碰撞检查关闭，工作空间防护不能视为已实现。
+- 数据配置对应直接版 topic；改为 guarded 时必须同步核对 FK/action 与夹爪通道。
+- 后续按用户具体需求修改，不能因为本文件列出问题就自行改代码。
+- 未来模型部署应明确 observation/action、坐标系、单位、频率与预处理；policy core 与 ROS1/ROS2 adapter 分离是设计方向，目前不是已存在的目录。

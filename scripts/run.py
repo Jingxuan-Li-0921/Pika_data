@@ -396,6 +396,32 @@ def command_capture(args: argparse.Namespace) -> int:
     return run_compose(command)
 
 
+def command_bimanual(args: argparse.Namespace) -> int:
+    if args.hardware and args.mock:
+        raise RuntimeError("--hardware and --mock cannot be combined")
+    if args.allow_output and not args.hardware:
+        raise RuntimeError("--allow-output requires --hardware")
+    command = add_run_prefix(args.build) + [
+        "ros2", "launch", "pika_bimanual", "rig.launch.py",
+        f"mode:={args.mode}", f"hardware:={str(args.hardware).lower()}",
+        f"mock:={str(args.mock).lower()}",
+        f"hardware_output:={str(args.allow_output).lower()}",
+        f"allow_preview_recording:={str(args.preview_recording).lower()}",
+        f"dataset_dir:={args.dataset_dir}",
+    ]
+    if args.config:
+        command.append(f"config:={args.config}")
+    return run_compose(command, hardware=args.hardware)
+
+
+def command_bimanual_test(args: argparse.Namespace) -> int:
+    del args
+    return run_compose(add_run_prefix(False) + [
+        "env", "ROS_DOMAIN_ID=87", "ROS_LOCALHOST_ONLY=1",
+        "python3", "-m", "pytest", "-q", "src/pika_bimanual/test",
+    ])
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run Pika ROS2 commands in the Ubuntu 22.04/Humble container."
@@ -479,6 +505,19 @@ def build_parser() -> argparse.ArgumentParser:
     capture.add_argument("--episode-index", type=int, default=0)
     capture.add_argument("--instructions", default="[null]")
     capture.set_defaults(handler=command_capture)
+
+    bimanual = subparsers.add_parser("bimanual", help="Dual Piper + Pika Grippers capture/policy pipeline (hardware off by default).")
+    bimanual.add_argument("--mode", choices=("teleop", "policy"), default="teleop")
+    bimanual.add_argument("--config", help="Container path to a rig YAML; defaults to the installed rig.yaml.")
+    bimanual.add_argument("--dataset-dir", default="/workspace/data/pika_bimanual")
+    bimanual.add_argument("--hardware", action="store_true")
+    bimanual.add_argument("--mock", action="store_true")
+    bimanual.add_argument("--allow-output", action="store_true")
+    bimanual.add_argument("--preview-recording", action="store_true")
+    bimanual.add_argument("--build", action="store_true")
+    bimanual.set_defaults(handler=command_bimanual)
+    bimanual_test = subparsers.add_parser("bimanual-test", help="Run offline tests in isolated ROS domain 87 without device access.")
+    bimanual_test.set_defaults(handler=command_bimanual_test)
 
     return parser
 
